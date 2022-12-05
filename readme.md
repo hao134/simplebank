@@ -1,297 +1,188 @@
-# Working with database (Postgres + SQLC)
+[![GitHub Workflow Status (branch)](https://img.shields.io/github/workflow/status/golang-migrate/migrate/CI/master)](https://github.com/golang-migrate/migrate/actions/workflows/ci.yaml?query=branch%3Amaster)
+[![GoDoc](https://pkg.go.dev/badge/github.com/golang-migrate/migrate)](https://pkg.go.dev/github.com/golang-migrate/migrate/v4)
+[![Coverage Status](https://img.shields.io/coveralls/github/golang-migrate/migrate/master.svg)](https://coveralls.io/github/golang-migrate/migrate?branch=master)
+[![packagecloud.io](https://img.shields.io/badge/deb-packagecloud.io-844fec.svg)](https://packagecloud.io/golang-migrate/migrate?filter=debs)
+[![Docker Pulls](https://img.shields.io/docker/pulls/migrate/migrate.svg)](https://hub.docker.com/r/migrate/migrate/)
+![Supported Go Versions](https://img.shields.io/badge/Go-1.16%2C%201.17-lightgrey.svg)
+[![GitHub Release](https://img.shields.io/github/release/golang-migrate/migrate.svg)](https://github.com/golang-migrate/migrate/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/golang-migrate/migrate)](https://goreportcard.com/report/github.com/golang-migrate/migrate)
 
-###### tags: `golang_backend`
+# migrate
 
-## 1. install & use docker + porstgres +tableplus to create DB schemas
+__Database migrations written in Go. Use as [CLI](#cli-usage) or import as [library](#use-in-your-go-project).__
 
-### what will we do
+* Migrate reads migrations from [sources](#migration-sources)
+   and applies them in correct order to a [database](#databases).
+* Drivers are "dumb", migrate glues everything together and makes sure the logic is bulletproof.
+   (Keeps the drivers lightweight, too.)
+* Database drivers don't assume things or try to correct user input. When in doubt, fail.
 
-1. install docker desktop
-2. run postgres container
+Forked from [mattes/migrate](https://github.com/mattes/migrate)
 
-```dockerfile
-docker pull postgres:12-alpine
-docker pull <image>:<tag>
+## Databases
+
+Database drivers run migrations. [Add a new database?](database/driver.go)
+
+* [PostgreSQL](database/postgres)
+* [PGX](database/pgx)
+* [Redshift](database/redshift)
+* [Ql](database/ql)
+* [Cassandra](database/cassandra)
+* [SQLite](database/sqlite)
+* [SQLite3](database/sqlite3) ([todo #165](https://github.com/mattes/migrate/issues/165))
+* [SQLCipher](database/sqlcipher)
+* [MySQL/ MariaDB](database/mysql)
+* [Neo4j](database/neo4j)
+* [MongoDB](database/mongodb)
+* [CrateDB](database/crate) ([todo #170](https://github.com/mattes/migrate/issues/170))
+* [Shell](database/shell) ([todo #171](https://github.com/mattes/migrate/issues/171))
+* [Google Cloud Spanner](database/spanner)
+* [CockroachDB](database/cockroachdb)
+* [ClickHouse](database/clickhouse)
+* [Firebird](database/firebird)
+* [MS SQL Server](database/sqlserver)
+
+### Database URLs
+
+Database connection strings are specified via URLs. The URL format is driver dependent but generally has the form: `dbdriver://username:password@host:port/dbname?param1=true&param2=false`
+
+Any [reserved URL characters](https://en.wikipedia.org/wiki/Percent-encoding#Percent-encoding_reserved_characters) need to be escaped. Note, the `%` character also [needs to be escaped](https://en.wikipedia.org/wiki/Percent-encoding#Percent-encoding_the_percent_character)
+
+Explicitly, the following characters need to be escaped:
+`!`, `#`, `$`, `%`, `&`, `'`, `(`, `)`, `*`, `+`, `,`, `/`, `:`, `;`, `=`, `?`, `@`, `[`, `]`
+
+It's easiest to always run the URL parts of your DB connection URL (e.g. username, password, etc) through an URL encoder. See the example Python snippets below:
+
+```bash
+$ python3 -c 'import urllib.parse; print(urllib.parse.quote(input("String to encode: "), ""))'
+String to encode: FAKEpassword!#$%&'()*+,/:;=?@[]
+FAKEpassword%21%23%24%25%26%27%28%29%2A%2B%2C%2F%3A%3B%3D%3F%40%5B%5D
+$ python2 -c 'import urllib; print urllib.quote(raw_input("String to encode: "), "")'
+String to encode: FAKEpassword!#$%&'()*+,/:;=?@[]
+FAKEpassword%21%23%24%25%26%27%28%29%2A%2B%2C%2F%3A%3B%3D%3F%40%5B%5D
+$
 ```
 
-**start a container**
+## Migration Sources
 
-```dockerfile=
-docker run
---name <container_name>
--e <environment_variable>
-        -d
-    <image>:<tag>
+Source drivers read migrations from local or remote sources. [Add a new source?](source/driver.go)
 
-docker run
---name some-postgres
--e POSTGRES_PASSWORD=mysecretpassword
-        -d
-    postgres
+* [Filesystem](source/file) - read from filesystem
+* [io/fs](source/iofs) - read from a Go [io/fs](https://pkg.go.dev/io/fs#FS)
+* [Go-Bindata](source/go_bindata) - read from embedded binary data ([jteeuwen/go-bindata](https://github.com/jteeuwen/go-bindata))
+* [pkger](source/pkger) - read from embedded binary data ([markbates/pkger](https://github.com/markbates/pkger))
+* [GitHub](source/github) - read from remote GitHub repositories
+* [GitHub Enterprise](source/github_ee) - read from remote GitHub Enterprise repositories
+* [Bitbucket](source/bitbucket) - read from remote Bitbucket repositories
+* [Gitlab](source/gitlab) - read from remote Gitlab repositories
+* [AWS S3](source/aws_s3) - read from Amazon Web Services S3
+* [Google Cloud Storage](source/google_cloud_storage) - read from Google Cloud Platform Storage
 
+## CLI usage
 
-// our case
-docker run --name postgres12 -p 5432:5432 -e POSTGRES_USER=root -e POSTGRES_PASSWORD=secret -d postgres:12-alpine
+* Simple wrapper around this library.
+* Handles ctrl+c (SIGINT) gracefully.
+* No config search paths, no config files, no magic ENV var injections.
 
-// stop and start container
-docker stop [container-name]
-docker start [container-name]
+__[CLI Documentation](cmd/migrate)__
+
+### Basic usage
+
+```bash
+$ migrate -source file://path/to/migrations -database postgres://localhost:5432/database up 2
 ```
 
-Basically, a container is 1 instance of the application contained in the image.
-we can start multiple containers from 1 single image.
-**Run command in container**
+### Docker usage
 
-```dockerfile=
-docker exec -it
-<container_name_or_id>
-    <commnad> [args]
-// in our case
-docker exec -it postgres12 psql -U root
-// log in postgres console using root as user
-
-
-// go into containers bash run any linux command
-docker exec -it postgres12 /bin/sh
+```bash
+$ docker run -v {{ migration dir }}:/migrations --network host migrate/migrate
+    -path=/migrations/ -database postgres://localhost:5432/database up 2
 ```
 
-**View container logs**
+## Use in your Go project
 
-```dockerfile=
-docker logs
-<container_name_or_id>
+* API is stable and frozen for this release (v3 & v4).
+* Uses [Go modules](https://golang.org/cmd/go/#hdr-Modules__module_versions__and_more) to manage dependencies.
+* To help prevent database corruptions, it supports graceful stops via `GracefulStop chan bool`.
+* Bring your own logger.
+* Uses `io.Reader` streams internally for low memory overhead.
+* Thread-safe and no goroutine leaks.
+
+__[Go Documentation](https://godoc.org/github.com/golang-migrate/migrate)__
+
+```go
+import (
+    "github.com/golang-migrate/migrate/v4"
+    _ "github.com/golang-migrate/migrate/v4/database/postgres"
+    _ "github.com/golang-migrate/migrate/v4/source/github"
+)
+
+func main() {
+    m, err := migrate.New(
+        "github://mattes:personal-access-token@mattes/migrate_test",
+        "postgres://localhost:5432/database?sslmode=enable")
+    m.Steps(2)
+}
 ```
 
-3. install table plus
+Want to use an existing database client?
 
-![](https://i.imgur.com/OC9zU4D.png)
+```go
+import (
+    "database/sql"
+    _ "github.com/lib/pq"
+    "github.com/golang-migrate/migrate/v4"
+    "github.com/golang-migrate/migrate/v4/database/postgres"
+    _ "github.com/golang-migrate/migrate/v4/source/file"
+)
 
-4. create database schema
-
-## 2. How to write & run database migration in Golang
-
-1. install https://github.com/golang-migrate/migrate
-
-```
-brew install golang-migrate
-```
-
-useful command
-![](https://i.imgur.com/zc1BMSf.png)
-
-1. create folder /db/migration
-   use code
-
-```
-migrate create -ext sql -dir db/migration -seq init_schema
+func main() {
+    db, err := sql.Open("postgres", "postgres://localhost:5432/database?sslmode=enable")
+    driver, err := postgres.WithInstance(db, &postgres.Config{})
+    m, err := migrate.NewWithDatabaseInstance(
+        "file:///migrations",
+        "postgres", driver)
+    m.Up() // or m.Step(2) if you want to explicitly set the number of migrations to run
+}
 ```
 
-2. go into docker postgres12's terminal
+## Getting started
 
-```
-docker exec -it postgres12 createdb --username=root --owner=root simple_bank
+Go to [getting started](GETTING_STARTED.md)
 
-//see if it work or not
-docker exec -it postgres12 psql -U root simple_bank
-```
+## Tutorials
 
-in the Makefile
+* [CockroachDB](database/cockroachdb/TUTORIAL.md)
+* [PostgreSQL](database/postgres/TUTORIAL.md)
 
-```
-postgres:
-	docker run --name postgres12 -p 5432:5432 -e POSTGRES_USER=root -e POSTGRES_PASSWORD=secret -d postgres:12-alpine
+(more tutorials to come)
 
-createdb:
-	docker exec -it postgres12 createdb --username=root --owner=root simple_bank
+## Migration files
 
-dropdb:
-	docker exec -it postgres12 dropdb simple_bank
+Each migration has an up and down migration. [Why?](FAQ.md#why-two-separate-files-up-and-down-for-a-migration)
 
-.PHONY: postgres createdb dropdb
+```bash
+1481574547_create_users_table.up.sql
+1481574547_create_users_table.down.sql
 ```
 
-In terminal run:
+[Best practices: How to write migrations.](MIGRATIONS.md)
 
-```
-make postgres // to set up docker postgres
-make createdb // to create db
-...
-```
+## Versions
 
-3. migrate setup
+Version | Supported? | Import | Notes
+--------|------------|--------|------
+**master** | :white_check_mark: | `import "github.com/golang-migrate/migrate/v4"` | New features and bug fixes arrive here first |
+**v4** | :white_check_mark: | `import "github.com/golang-migrate/migrate/v4"` | Used for stable releases |
+**v3** | :x: | `import "github.com/golang-migrate/migrate"` (with package manager) or `import "gopkg.in/golang-migrate/migrate.v3"` (not recommended) | **DO NOT USE** - No longer supported |
 
-To set up the database we created using the sql code in migrate up
+## Development and Contributing
 
-```
-migrate -path db/migration -database "postgresql://root:secret@localhost:5432/simple_bank?sslmode=disable" -verbose up
-```
+Yes, please! [`Makefile`](Makefile) is your friend,
+read the [development guide](CONTRIBUTING.md).
 
-## 3. Generate CRUD Golang code from SQL
+Also have a look at the [FAQ](FAQ.md).
 
-:::info
+---
 
-### Database / SQL
-
-- Very fast & straightforward
-- Manual mapping SQL fields to variables
-- Easy to make mistakes, not caught until runtimes
-
-### Gorm
-
-- CRUD functions already implemented, very short production code
-- Must learn to write queries using gorm's function
-- Run slowly on high load
-
-### SQLX
-
-- Quite fast & easy to use.
-- Fields mapping via query text & struct tags
-- Failure won't occur until runtime.
-
-### SQLC
-
-- Very fast & easy to use
-- Automatic code generation
-- Catch SQL query errors before generating codes
-- Full support Postgres. MySQL is experimental.
-  :::
-
-Makefile
-
-```
-postgres:
-	docker run --name postgres12 -p 5432:5432 -e POSTGRES_USER=root -e POSTGRES_PASSWORD=secret -d postgres:12-alpine
-
-createdb:
-	docker exec -it postgres12 createdb --username=root --owner=root simple_bank
-
-dropdb:
-	docker exec -it postgres12 dropdb simple_bank
-
-migrateup:
-	migrate -path db/migration -database "postgresql://root:secret@localhost:5432/simple_bank?sslmode=disable" -verbose up
-
-migratedown:
-	migrate -path db/migration -database "postgresql://root:secret@localhost:5432/simple_bank?sslmode=disable" -verbose down
-
-sqlc:
-	sqlc generate
-
-test:
-	go test -v -cover ./...
-# -v verbose -cover -> measure code coverage ./... to run unit tests in all of them
-
-.PHONY: postgres createdb dropdb migrateup migratedown sqlc test
-```
-
-1. 首先 sqlc.init 打在 teminal
-   會產生 sqlc.yaml
-2. 在 db 資料夾中創立 query 和 sqlc 兩個資料夾
-3. 在 query 中按照資料庫寫 sql 語言，在此例中寫了 account, entry 和 transfer 三個 sql 檔
-4. 回到 makefile 中打下 make sqlc 就會生成 go 檔，以此可以寫下測試檔來測試它們
-
-## A clean way to implement database transaction in Golang
-
-### What is a db transaction?
-
-- A single unit of work
-- Often made up of multiple db operations
-
-Example:
-Transfer 10 USD from bank account 1 to bank account 2
-
-1. Create a transfer record with amount 10
-2. Create an account entry for account 1 with amount = -10
-3. Create an account entry for account 2 with amount = +10
-4. Subtract 10 from the balance of account 1
-5. Add 10 to the balance of account2
-
-### Why do we need db transaction?
-
-1. To provide a reliable and consistent unit of work, even in case of system failure
-2. To provide isolation between programs that access the database concurrently.
-
-### ACID PROPERTY
-
-1. Atomicity(A): Either all operations complete successfully or the transaction fails and the db is unchanged.
-2. Consistency(C): The db state must be valid after the transaction. All constranints must be satisfied.
-3. Isolation(I): Concurrency transactions must not affect each other.
-4. Durability(D): Data written by a successful transaction must be recorded in persistent storage.
-
-### How to run sql TX?
-
-```
-BEGIN;
-...
-COMMIT
-```
-
-```
-BEGIN
-...
-ROLLBACK;
-```
-
-## Deeply understand transaction isolation levels & read phenomena
-
-### Read Phenomena
-
-- DIRTY READ
-  A transaction **reads** data written by other concurrent **uncommitted** transaction
-- NON-REPEATABLE READ
-  A transaction **reads** the **same row twice** and sees different value because it has been **modified** by other **committed** transaction
-- PHANTOM READ
-  A transaction **re-executes** a query to **find rows** that satisfy a condition and sees a **different set** of rows, due to changes by other **committed** transaction
-- SERIALIZATION ANOMALY
-  The result of a **group** of concurrent **committed transactions** is **impossible to achieve** if we try to run them **sequentially** in any order without overlapping.
-
-### 4 Standard Isolation Levels(American National Standards Institure-ANSI)
-
-- Low Level
-
-1. READ UNCOMMITTED: Can see data written by uncommitted transaction
-2. READ COMMITTED: Only see data written by committed transaction
-3. REPEATABLE READ: Same read query always reutrns same result.
-4. SERIALIZABLE: Can achieve same result if execute transactions serially in some order instead of concurrently.
-
-### See 4 isolation Levels in MySQL & postgreSQL
-
-- MySQL
-
-1. READ UNCOMMITTED:
-   ![](https://i.imgur.com/KuvBIPs.jpg)
-2. READ COMMITTED
-   ![](https://i.imgur.com/9lRWthS.jpg)
-3. REPEATABLE COMMITTED
-   看右邊底下，會有 serializable anomaly 的問題
-   ![](https://i.imgur.com/FQWPyS0.jpg)
-4. SERIALIZABLE
-   MySQL 是靠鎖住來預防 serializable anomaly 的，因此右邊要 commit;左邊才會執行 update
-   ![](https://i.imgur.com/5dZQG7n.jpg)
-
-- postgreSQL
-  因為 postgre 預設 read uncommitted 和 read committed 是一樣的，因此只有三個 isolation level.
-
-1. READ UNCOMMITTED & READ COMMITTED:
-   當左邊已經更新了，但右邊並不曉得，因此，會導致右邊相同的查詢有不同的值出現的情況，這就是 PHANTOM READ
-   ![](https://i.imgur.com/HWQTbbs.jpg)
-2. REPEATABLE READ
-   同樣的情況，在 REAPEATABLE READ 中會提醒錯誤發生(could not serialize access due to concurrent update)
-   ![](https://i.imgur.com/X8ZxFfc.jpg)
-   這是在 REAPEATABLE READ 下發生的 SERIALIZATION ANOMALY(看右下角)
-   ![](https://i.imgur.com/zEvZHQ1.jpg)
-
-3. SERIALIZABLE
-   右下角提醒了(CHECK)(HINT: The transaction might succeed if retried.)來避免 SERIALIZATION ANOMALY
-   ![](https://i.imgur.com/6AcgIXz.jpg)
-
-**Summary**
-level 4 可以避免 全部
-level 3 可以避免 SERIALIZATION ANOMALY 以外的問題
-...
-
-mysql default mode is REPEATABLE COMMITTED
-postgreSql mode is READ COMMITTED
-
-mysql 利用 Loking mechanism
-postgresql 利用 dependencies detection
+Looking for alternatives? [https://awesome-go.com/#database](https://awesome-go.com/#database).
